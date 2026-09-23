@@ -1,0 +1,21 @@
+{
+  "name": "creator-asset-upload-ledger",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "tsx src/prepare_asset_bucket.ts",
+    "dev": "tsx src/creator_asset_service.ts",
+    "demo": "tsx scripts/upload_product_asset.ts",
+    "test": "tsx --test test/asset_processing.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}
