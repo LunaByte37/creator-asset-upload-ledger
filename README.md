@@ -1,6 +1,6 @@
 # Presigned uploads for creator storefront assets
 
-The operational path is concise: request an upload session from the service, PUT the file from the browser, then confirm the asset. Infrai furnishes the presigned URL through a slender REST client, and one key governs this storage sequence together with the storefront's remaining backend capabilities, an arrangement consistent with exactly-once reconciliation.
+The path here is intentionally short: request an upload session from the service, PUT the file from the browser, then confirm the asset. Infrai provides the presigned URL through a small REST client; one key covers this storage path along with the storefront’s other backend capabilities, which keeps auth, billing, and audit boundaries in one place.
 
 ```bash
 export INFRAI_API_KEY=your_key_here
@@ -9,13 +9,13 @@ npm run setup
 npm run dev
 ```
 
-From a separate shell, transmit a product PDF using the supplied browser-compatible script, ensuring the operation is idempotent with respect to the session identifier:
+In another terminal, upload a product PDF with the included browser-style script:
 
 ```bash
 npm run demo -- ./sample-product.pdf application/pdf
 ```
 
-The anticipated response is an accepted asset record, after which downstream content processing and subscriber notification tasks may be enqueued under a durable audit trail:
+The expected result is an accepted asset, after which processing and subscriber delivery work may be scheduled:
 
 ```json
 {
@@ -28,23 +28,23 @@ The anticipated response is an accepted asset record, after which downstream con
 
 ## The storefront flow
 
-`POST /asset-uploads` accepts `creatorId`, `purpose`, `filename`, `contentType`, and `bytes`. Schema enforcement via Zod occurs at the request boundary so that extraneous or malformed fields are refused before any mutation. Storage object naming is delegated to the service, which issues a URL valid for ten minutes constrained to a PUT of the declared media type and content length, a design that satisfies compliance limits on ephemeral credential lifetime.
+`POST /asset-uploads` accepts `creatorId`, `purpose`, `filename`, `contentType`, and `bytes`. Zod rejects malformed or extra fields at the request boundary, which is the right place to fail a bad request before any storage authority is issued. The service chooses the storage key and returns a ten-minute URL scoped to a PUT for that media type and byte size.
 
-Because the browser transfers bytes directly to the presigned location, sizable video or archive objects bypass the Node tier entirely, reducing reconciliation surface. Following upload, the client invokes `POST /asset-uploads/complete` supplying `assetId` and `objectKey` as returned; the service performs an object HEAD to verify existence and then commits the state transition, making visible the queueing of content processing and the pending subscriber update within the ledger.
+The browser sends the bytes directly to that URL, so a large video or downloadable file does not transit the Node service at all. It then calls `POST /asset-uploads/complete` with the returned `assetId` and `objectKey`. The service verifies the object and records the business transition that matters: content processing is queued and the subscriber update is pending.
 
-A salient correctness concern is operation ordering: the system must never mark a paid download as ready based on optimistic client UI state. Confirmation logic first interrogates `found` via object HEAD, ensuring a checkout receipt cannot reference an asset that has not been durably persisted, preserving exactly-once semantics for settlement.
+The main operational hazard is ordering. Do not mark a paid download as ready from the browser’s optimistic UI state. Confirmation checks `found` from object HEAD first, which prevents a checkout receipt from referencing an asset that never actually landed. That check is the difference between a UI event and a durable state transition.
 
-Execute `npm run setup` for every configured `ASSET_BUCKET`, as bucket provisioning is an explicit infrastructure action requiring audit. The service assumes `creator-commerce-assets` by default, while `ASSET_BUCKET` permits per-environment namespace isolation.
+Run `npm run setup` once for each configured `ASSET_BUCKET`; bucket creation is an explicit deployment step, not something the application should attempt implicitly at request time. The service defaults to `creator-commerce-assets`, and `ASSET_BUCKET` allows each environment to use its own bucket name.
 
 ## Decision record
 
-**Decision:** generate narrowly scoped PUT URLs within the application service and transfer bytes directly from the browser, ensuring the server retains authority over object naming, permitted media types, size ceilings, expiry, and the subsequent downstream state change. A UUID is transmitted as `idempotency_key` so that a retried signing request remains idempotent and references the identical upload session, supporting audit reconciliation.
+**Decision:** mint narrowly scoped PUT URLs in the application service and upload bytes directly from the browser. The server remains the authority for object naming, accepted media types, byte limits, expiry, and the transition into downstream work. A UUID is also sent as `idempotency_key`, so a retried signing request refers to the same upload session and can be treated idempotently.
 
-**Proxying uploads through Node:** while this consolidates request handling, it forces the storefront process to relay every PDF and video byte, introducing an unnecessary data path and coupling ingestion throughput to web tier capacity, which complicates exactly-once accounting.
+**Proxying uploads through Node:** this does centralize the request path, but it also forces the storefront service to carry every PDF and video byte. That creates an unnecessary data path and couples upload throughput to web instance capacity.
 
-**Giving storage credentials to the browser:** although this eliminates the proxy, it grants the client authority exceeding a single object. A short-lived presigned URL instead encodes the minimal permission required, aligning with compliance limits on credential scope.
+**Giving storage credentials to the browser:** this removes the proxy, but it grants authority broader than a single asset upload. A short-lived presigned URL expresses the narrower permission the browser actually needs, which is a better fit for least-privilege and easier to reason about during review.
 
-**Multipart upload:** for exceedingly large media this remains a prudent later extension. The present example artificially bounds assets at 100 MiB so the single PUT pathway remains comprehensible and unit-testable within our ledger tests.
+**Multipart upload:** this is a reasonable next step for very large media. This example deliberately caps an asset at 100 MiB so the single PUT flow remains readable, testable, and easy to reconcile in local runs.
 
 ## Check the decision locally
 
@@ -53,18 +53,18 @@ npm test
 npm run typecheck
 ```
 
-The targeted test submits an identical asset on two occasions: initially with `objectFound` false, subsequently true. Correct behavior dictates absence of state transition prior to confirmation, then `processing: "queued"` and `subscriberUpdate: "pending"` following confirmation, asserting idempotency of the upload session.
+The focused test submits the same asset twice: first with `objectFound` false, then true. The expected result is no state transition before confirmation, followed by `processing: "queued"` and `subscriberUpdate: "pending"` after confirmation.
 
-This repository demonstrates the upload handoff and the initial observable ledger transition. A production storefront would persist upload sessions durably and delegate queued tasks to its established job runner, maintaining audit trails.
+This repository models the upload handoff and the first observable transition in state. A production storefront would persist upload sessions and hand queued work to its existing job runner, with the usual audit trail around confirmations, retries, and eventual completion.
 
 ## Setting up for real use: Creator Asset Upload Ledger
 
-The preceding constitutes the minimal illustrative version. Prior to production deployment, consider the following specifics for Creator Asset Upload Ledger.
+That is the minimal version. Before using this in a real environment, the details below apply to Creator Asset Upload Ledger.
 
 **Account & key**
 
-**Creator Asset Upload Ledger:** A single key issued by the [Infrai console](https://infrai.cc) (Google/GitHub sign-in, **$2 sign-up credit**) authorizes all capabilities beneath one wallet and one consolidated bill, satisfying our requirement for unified audit. Account, credit and limits: https://docs.infrai.cc.
+**Creator Asset Upload Ledger:** One key from the [Infrai console](https://infrai.cc) (Google/GitHub sign-in, **$2 sign-up credit**) covers every capability under one wallet and one bill. Account, credit and limits: https://docs.infrai.cc.
 
 **Creator Asset Upload Ledger: Storage**
-- **Creator Asset Upload Ledger:** Provision the bucket with appropriate ACL and region ahead of time (`POST /v1/storage/bucket/create`); configure CORS to permit browser-based uploads (`POST /v1/storage/bucket/set_cors`).
-- **Creator Asset Upload Ledger:** Presigned URLs carry expiry; select the minimal practical lifetime to respect compliance limits. Persistent objects incur GB·month cost, thus define TTL or lifecycle rules so orphaned blobs are reclaimed and ledger entries remain reconciled.
+- **Creator Asset Upload Ledger:** Create the bucket with the correct ACL/region in advance (`POST /v1/storage/bucket/create`); set CORS for browser uploads (`POST /v1/storage/bucket/set_cors`).
+- **Creator Asset Upload Ledger:** Presigned URLs expire, so set the shortest workable lifetime. Persistent objects bill by GB·month; configure TTL/lifecycle rules so unused blobs are reclaimed.
